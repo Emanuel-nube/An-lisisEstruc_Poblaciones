@@ -1,0 +1,208 @@
+---
+title: "Analisis de Heredabilidad utilizando datos del estudio Genome-wide association mapping reveals a rich genetic architecture of complex traits in Oryza sativa"
+author: "Tito ademir, Smith Aguilar y Shyrley Ramos"
+format:
+  html:
+    toc: true
+    toc-location: left
+    number-sections: true
+    self-contained: true
+editor_options: 
+  chunk_output_type: console
+execute:
+  echo: false
+  warning: false
+---
+
+```{r}
+install.packages("lme4")
+install.packages("lmerTest")
+library(lme4)
+library(lmerTest)
+```
+
+
+# Lectura de base de datos y modificación
+
+
+```{r}
+#libreria para lectura de base de datos
+if (!require("readxl")) install.packages("readxl")
+if (!require("inti")) install.packages("inti")
+library(readxl)
+library(inti)
+
+# Lectura del archivo Excel
+fb <- read_excel("sativas413.xlsx")
+
+# Reemplazo de cualquier espacio por "_"
+names(fb) <- gsub("[[:space:]]+", "_", names(fb))
+
+# Visualizarlo como tabla interactiva
+fb %>% web_table()
+
+# Seleccion de columnas de interés para análisis de heredabilidad de "Flowering time"
+fb_flowering <- fb[, c("HybID",
+                       "Flowering_time_at_Arkansas",
+                       "Flowering_time_at_Faridpur",
+                       "Flowering_time_at_Aberdeen",
+                       "Year07Flowering_time_at_Arkansas",
+                       "Year06Flowering_time_at_Arkansas")]
+
+```
+
+
+# Formato largo con columnas para un modelo mixto (lmer()),
+
+
+```{r}
+# Renombramiento de columnas para simplificar ambientes
+names(fb_flowering) <- c("GEN", "Arkansas", "Faridpur", "Aberdeen", "Arkansas_2007", "Arkansas_2006")
+
+# Converció a formato largo
+fb_long <- reshape2::melt(fb_flowering, id.vars = "GEN", 
+                          variable.name = "ENV", value.name = "KW")
+
+# Agregar columna de repetición (1 sola repetición)
+fb_long$REP <- as.factor(1)
+
+```
+
+
+# Ajuste de modelo mixto 
+
+
+```{r}
+
+library(lme4)             
+
+#Ajuste para que  kw sea numérico
+fb_long$KW <- as.numeric(as.character(fb_long$KW))
+
+# Ajuste de modelo mixto: GEN como aleatorio, ENV como aleatorio
+modelo <- lmer(KW ~ (1|GEN) + (1|ENV), data = fb_long)
+
+# Ver resumen del modelo
+summary(modelo)
+
+# Extracción de componentes de varianza
+vc <- as.data.frame(VarCorr(modelo))
+var_gen <- vc[vc$grp == "GEN", "vcov"]
+var_env <- vc[vc$grp == "ENV", "vcov"]
+var_res <- attr(VarCorr(modelo), "sc")^2
+
+```
+
+
+# Estimación de heredabilidad para "Flowering time"
+
+
+```{r}
+
+# Calculo de heredabilidad en sentido amplio (H²)
+H2 <- var_gen / (var_gen + var_env + var_res)
+H2
+
+```
+
+
+# Gráficas de distribución de rasgo
+
+
+```{r}
+
+library(ggplot2)
+
+# Boxplot por genotipo
+ggplot(fb_long, aes(x = GEN, y = KW)) +
+  geom_boxplot(fill = "skyblue") +
+  theme_bw() +
+  labs(title = "Distribución del rasgo por genotipo",
+       x = "Genotipo", y = "Flowering time") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Boxplot por ambiente
+ggplot(fb_long, aes(x = ENV, y = KW)) +
+  geom_boxplot(fill = "lightgreen") +
+  theme_bw() +
+  labs(title = "Distribución del rasgo por ambiente",
+       x = "Ambiente", y = "Flowering time")
+
+```
+
+#Promedio por genotipo con barras de error
+
+```{r}
+library(dplyr)
+
+# Calculo medias y errores estándar
+resumen <- fb_long %>%
+  group_by(GEN) %>%
+  summarise(media = mean(KW, na.rm = TRUE),
+            sd = sd(KW, na.rm = TRUE),
+            n = sum(!is.na(KW)),
+            se = sd / sqrt(n))
+
+# Gráfico de barras con errores estándar
+ggplot(resumen, aes(x = GEN, y = media)) +
+  geom_bar(stat = "identity", fill = "orange") +
+  geom_errorbar(aes(ymin = media - se, ymax = media + se), width = 0.2) +
+  theme_bw() +
+  labs(title = "Promedio del rasgo por genotipo con error estándar",
+       x = "Genotipo", y = "Flowering time") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+
+# Diagnóstico: residuos vs valores ajustados
+
+
+```{r}
+# Residuos y valores ajustados
+plot(fitted(modelo), resid(modelo),
+     xlab = "Valores ajustados",
+     ylab = "Residuos",
+     main = "Residuos vs Ajustados")
+abline(h = 0, col = "red")
+
+```
+
+
+#QQ-plot para revisar normalidad de residuos
+
+
+```{r}
+qqnorm(resid(modelo), main = "QQ-plot de residuos")
+qqline(resid(modelo), col = "red")
+
+            )
+```
+
+
+#  Visualización de efectos aleatorios por genotipo
+
+
+```{r}
+
+library(lme4)
+
+# Obtención de efectos aleatorios
+ranef_model <- ranef(modelo, condVar = TRUE)
+
+# Efectos de GEN
+efectos_gen <- ranef_model$GEN
+efectos_gen$GEN <- rownames(efectos_gen)
+
+library(ggplot2)
+
+ggplot(efectos_gen, aes(x = reorder(GEN, `(Intercept)`), y = `(Intercept)`)) +
+  geom_point(color = "blue") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Efectos aleatorios por genotipo",
+       x = "Genotipo", y = "Efecto estimado")
+            
+```
+
